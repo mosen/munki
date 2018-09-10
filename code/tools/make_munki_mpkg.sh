@@ -16,6 +16,7 @@ MAGICNUMBER=482
 
 # try to automagically find munki source root
 TOOLSDIR=$(dirname $0)
+
 # Convert to absolute path.
 TOOLSDIR=$(cd "${TOOLSDIR}"; pwd)
 PARENTDIR=$(dirname $TOOLSDIR)
@@ -216,7 +217,6 @@ build_msc() {
     fi
 }
 
-build_msc "${MUNKIROOT}"
 
 
 # Build MunkiStatus
@@ -226,7 +226,7 @@ build_msc "${MUNKIROOT}"
 #
 build_munkistatus() {
     echo "Building MunkiStatus.xcodeproj..."
-    pushd "$MUNKIROOT/code/apps/MunkiStatus" > /dev/null
+    pushd "$1/code/apps/MunkiStatus" > /dev/null
     /usr/bin/xcodebuild -project "MunkiStatus.xcodeproj" -alltargets clean > /dev/null
     /usr/bin/xcodebuild -project "MunkiStatus.xcodeproj" -alltargets build > /dev/null
     XCODEBUILD_RESULT="$?"
@@ -236,10 +236,10 @@ build_munkistatus() {
         exit 2
     fi
 
-    MSAPP="$MUNKIROOT/code/apps/MunkiStatus/build/Release/MunkiStatus.app"
+    MSAPP="$1/code/apps/MunkiStatus/build/Release/MunkiStatus.app"
     if [ ! -e  "$MSAPP" ]; then
         echo "Need a release build of MunkiStatus.app!"
-        echo "Open the Xcode project $MUNKIROOT/code/apps/MunkiStatus/MunkiStatus.xcodeproj and build it."
+        echo "Open the Xcode project $1/code/apps/MunkiStatus/MunkiStatus.xcodeproj and build it."
         exit 2
     else
         MSVERSION=`defaults read "$MSAPP/Contents/Info" CFBundleShortVersionString`
@@ -247,30 +247,37 @@ build_munkistatus() {
     fi
 }
 
-build_munkistatus "${MUNKIROOT}"
 
 
 # Build munki-notifier
-echo "Building munki-notifier.xcodeproj..."
-pushd "$MUNKIROOT/code/apps/munki-notifier" > /dev/null
-/usr/bin/xcodebuild -project "munki-notifier.xcodeproj" -alltargets clean > /dev/null
-/usr/bin/xcodebuild -project "munki-notifier.xcodeproj" -alltargets build > /dev/null
-XCODEBUILD_RESULT="$?"
-popd > /dev/null
-if [ "$XCODEBUILD_RESULT" -ne 0 ]; then
-    echo "Error building munki-notifier.app: $XCODEBUILD_RESULT"
-    exit 2
-fi
+#
+# Arguments:
+#   $1 - Root path to the checked-out munki git repository
+#
+build_munkinotifier() {
+    # Build munki-notifier
+    echo "Building munki-notifier.xcodeproj..."
+    pushd "$1/code/apps/munki-notifier" > /dev/null
+    /usr/bin/xcodebuild -project "munki-notifier.xcodeproj" -alltargets clean > /dev/null
+    /usr/bin/xcodebuild -project "munki-notifier.xcodeproj" -alltargets build > /dev/null
+    XCODEBUILD_RESULT="$?"
+    popd > /dev/null
+    if [ "$XCODEBUILD_RESULT" -ne 0 ]; then
+        echo "Error building munki-notifier.app: $XCODEBUILD_RESULT"
+        exit 2
+    fi
 
-NOTIFIERAPP="$MUNKIROOT/code/apps/munki-notifier/build/Release/munki-notifier.app"
-if [ ! -e  "$NOTIFIERAPP" ]; then
-    echo "Need a release build of munki-notifier.app!"
-    echo "Open the Xcode project $MUNKIROOT/code/apps/notifier/munki-notifier.xcodeproj and build it."
-    exit 2
-else
-    NOTIFIERVERSION=`defaults read "$NOTIFIERAPP/Contents/Info" CFBundleShortVersionString`
-    echo "munki-notifier.app version: $NOTIFIERVERSION"
-fi
+    NOTIFIERAPP="$1/code/apps/munki-notifier/build/Release/munki-notifier.app"
+    if [ ! -e  "$NOTIFIERAPP" ]; then
+        echo "Need a release build of munki-notifier.app!"
+        echo "Open the Xcode project $1/code/apps/notifier/munki-notifier.xcodeproj and build it."
+        exit 2
+    else
+        NOTIFIERVERSION=`defaults read "$NOTIFIERAPP/Contents/Info" CFBundleShortVersionString`
+        echo "munki-notifier.app version: $NOTIFIERVERSION"
+    fi
+}
+
 
 # Create a PackageInfo file.
 makeinfo() {
@@ -318,8 +325,7 @@ if [ "$?" -ne 0 ]; then
 fi
 
 
-# Create temporary directory
-PKGTMP=`mktemp -d -t munkipkg`
+
 
 
 ## Create a template package root for the "core" package.
@@ -332,68 +338,80 @@ PKGTMP=`mktemp -d -t munkipkg`
 #   $2 - Path to the temporary package root, used to build each component package.
 #   $3 - Bootstrap mode (DEP) enabled? (0 - no/1 - yes)
 #
+# Globals:
+#   SVNREV - Subversion revision (if older version of munki)
+#   GITREV - Current git revision
+#
 create_pkgroot_core() {
     echo "Creating core package template..."
+    PKG_ROOT="$2/munki_core"
+    MUNKI_ROOT="$1"
 
     # Create directory structure.
-    COREROOT="$2/munki_core"
-    mkdir -m 1775 "$COREROOT"
-    mkdir -p "$COREROOT/usr/local/munki/munkilib"
-    chmod -R 755 "$COREROOT/usr"
+    mkdir -m 1775 "${PKG_ROOT}"
+    mkdir -p "${PKG_ROOT}/usr/local/munki/munkilib"
+    chmod -R 755 "${PKG_ROOT}/usr"
+
     # Copy command line utilities.
     # edit this if list of tools changes!
     for TOOL in authrestartd launchapp logouthelper managedsoftwareupdate supervisor ptyexec removepackages
     do
-        cp -X "$MUNKIROOT/code/client/$TOOL" "$COREROOT/usr/local/munki/" 2>&1
+        cp -X "${MUNKI_ROOT}/code/client/${TOOL}" "${PKG_ROOT}/usr/local/munki/" 2>&1
     done
     # Copy python libraries.
-    #cp -X "$MUNKIROOT/code/client/munkilib/"*.py "$COREROOT/usr/local/munki/munkilib/"
-    rsync -a --exclude '*.pyc' --exclude '.DS_Store' "$MUNKIROOT/code/client/munkilib/" "$COREROOT/usr/local/munki/munkilib/"
+    rsync -a --exclude '*.pyc' --exclude '.DS_Store' "${MUNKI_ROOT}/code/client/munkilib/" "${PKG_ROOT}/usr/local/munki/munkilib/"
+
     # Copy munki version.
-    cp -X "$MUNKIROOT/code/client/munkilib/version.plist" "$COREROOT/usr/local/munki/munkilib/"
+    cp -X "${MUNKI_ROOT}/code/client/munkilib/version.plist" "${PKG_ROOT}/usr/local/munki/munkilib/"
+
     # svnversion file was used when we were using subversion
     # we don't need this file if we have an updated get_version method in munkicommon.py
     if [[ "$SVNREV" -lt "1302" ]]; then
-        echo $SVNREV > "$COREROOT/usr/local/munki/munkilib/svnversion"
+        echo $SVNREV > "${PKG_ROOT}/usr/local/munki/munkilib/svnversion"
     fi
 
     # Enable bootstrap features if requested
     if [[ "$3" -eq "1" ]]; then
         echo "Enabling bootstrap mode..."
-        mkdir -p "${COREROOT}/Users/Shared/"
-        touch "${COREROOT}/Users/Shared/.com.googlecode.munki.checkandinstallatstartup"
+        mkdir -p "${PKG_ROOT}/Users/Shared/"
+        touch "${PKG_ROOT}/Users/Shared/.com.googlecode.munki.checkandinstallatstartup"
     fi
 
     # add Build Number and Git Revision to version.plist
-    /usr/libexec/PlistBuddy -c "Delete :BuildNumber" "$COREROOT/usr/local/munki/munkilib/version.plist" 2>/dev/null
-    /usr/libexec/PlistBuddy -c "Add :BuildNumber string $SVNREV" "$COREROOT/usr/local/munki/munkilib/version.plist"
-    /usr/libexec/PlistBuddy -c "Delete :GitRevision" "$COREROOT/usr/local/munki/munkilib/version.plist" 2>/dev/null
-    /usr/libexec/PlistBuddy -c "Add :GitRevision string $GITREV" "$COREROOT/usr/local/munki/munkilib/version.plist"
+    /usr/libexec/PlistBuddy -c "Delete :BuildNumber" "${PKG_ROOT}/usr/local/munki/munkilib/version.plist" 2>/dev/null
+    /usr/libexec/PlistBuddy -c "Add :BuildNumber string $SVNREV" "${PKG_ROOT}/usr/local/munki/munkilib/version.plist"
+    /usr/libexec/PlistBuddy -c "Delete :GitRevision" "${PKG_ROOT}/usr/local/munki/munkilib/version.plist" 2>/dev/null
+    /usr/libexec/PlistBuddy -c "Add :GitRevision string $GITREV" "${PKG_ROOT}/usr/local/munki/munkilib/version.plist"
+
     # Set permissions.
-    chmod -R go-w "$COREROOT/usr/local/munki"
-    chmod +x "$COREROOT/usr/local/munki"
-    #chmod +x "$COREROOT/usr/local/munki/munkilib/"*.py
+    chmod -R go-w "${PKG_ROOT}/usr/local/munki"
+    chmod +x "${PKG_ROOT}/usr/local/munki"
 
     # make paths.d file
-    mkdir -p "$COREROOT/private/etc/paths.d"
-    echo "/usr/local/munki" > "$COREROOT/private/etc/paths.d/munki"
-    chmod -R 755 "$COREROOT/private"
-    chmod 644 "$COREROOT/private/etc/paths.d/munki"
+    mkdir -p "${PKG_ROOT}/private/etc/paths.d"
+    echo "/usr/local/munki" > "${PKG_ROOT}/private/etc/paths.d/munki"
+    chmod -R 755 "${PKG_ROOT}/private"
+    chmod 644 "${PKG_ROOT}/private/etc/paths.d/munki"
 
     # Create directory structure for /Library/Managed Installs.
-    mkdir -m 1775 "${COREROOT}/Library"
-    mkdir -m 755 -p "${COREROOT}/Library/Managed Installs"
-    mkdir -m 750 -p "${COREROOT}/Library/Managed Installs/Cache"
-    mkdir -m 750 -p "${COREROOT}/Library/Managed Installs/catalogs"
-    mkdir -m 755 -p "${COREROOT}/Library/Managed Installs/manifests"
-
+    mkdir -m 1775 "${PKG_ROOT}/Library"
+    mkdir -m 755 -p "${PKG_ROOT}/Library/Managed Installs"
+    mkdir -m 750 -p "${PKG_ROOT}/Library/Managed Installs/Cache"
+    mkdir -m 750 -p "${PKG_ROOT}/Library/Managed Installs/catalogs"
+    mkdir -m 755 -p "${PKG_ROOT}/Library/Managed Installs/manifests"
 
     # Create package info file.
-    CORESIZE=$(du -sk ${COREROOT} | cut -f1)
-    NFILES=$(echo $(find ${COREROOT}/ | wc -l))
-    makeinfo core "$PKGTMP/info" "$PKGID" "$VERSION" $CORESIZE $NFILES norestart
+    CORESIZE=$(du -sk ${PKG_ROOT} | cut -f1)
+    NFILES=$(echo $(find ${PKG_ROOT}/ | wc -l))
+    makeinfo core "$2/info" "$PKGID" "$VERSION" $CORESIZE $NFILES norestart
 
+    # Update ownership
+    sudo chown root:admin "${PKG_ROOT}"
+    sudo chown -hR root:wheel "${PKG_ROOT}/usr"
+    sudo chown -hR root:admin "${PKG_ROOT}/Library"
+    sudo chown -hR root:wheel "${PKG_ROOT}/private"
 }
+
 
 ## Create a template package root for the "admin" package.
 #
@@ -407,133 +425,196 @@ create_pkgroot_core() {
 #
 create_pkgroot_admin() {
     echo "Creating admin package template..."
+    PKG_ROOT="$2/munki_admin"
+    MUNKI_ROOT="$1"
 
     # Create directory structure.
-    ADMINROOT="$2/munki_admin"
-    mkdir -m 1775 "$ADMINROOT"
-    mkdir -p "$ADMINROOT/usr/local/munki"
-    chmod -R 755 "$ADMINROOT/usr"
+    mkdir -m 1775 "${PKG_ROOT}"
+    mkdir -p "${PKG_ROOT}/usr/local/munki"
+    chmod -R 755 "${PKG_ROOT}/usr"
+
     # Copy command line admin utilities.
     # edit this if list of tools changes!
     for TOOL in makecatalogs makepkginfo manifestutil munkiimport iconimporter
     do
-        cp -X "$1/code/client/$TOOL" "$ADMINROOT/usr/local/munki/" 2>&1
+        cp -X "$1/code/client/${TOOL}" "${PKG_ROOT}/usr/local/munki/" 2>&1
     done
+
     # Set permissions.
-    chmod -R go-w "$ADMINROOT/usr/local/munki"
-    chmod +x "$ADMINROOT/usr/local/munki"
+    chmod -R go-w "${PKG_ROOT}/usr/local/munki"
+    chmod +x "${PKG_ROOT}/usr/local/munki"
 
     # make paths.d file
-    mkdir -p "$ADMINROOT/private/etc/paths.d"
-    echo "/usr/local/munki" > "$ADMINROOT/private/etc/paths.d/munki"
-    chmod -R 755 "$ADMINROOT/private"
-    chmod 644 "$ADMINROOT/private/etc/paths.d/munki"
+    mkdir -p "${PKG_ROOT}/private/etc/paths.d"
+    echo "/usr/local/munki" > "${PKG_ROOT}/private/etc/paths.d/munki"
+    chmod -R 755 "${PKG_ROOT}/private"
+    chmod 644 "${PKG_ROOT}/private/etc/paths.d/munki"
 
     # Create package info file.
-    ADMINSIZE=`du -sk $ADMINROOT | cut -f1`
-    NFILES=$(echo `find $ADMINROOT/ | wc -l`)
+    ADMINSIZE=$(du -sk ${PKG_ROOT} | cut -f1)
+    NFILES=$(echo `find ${PKG_ROOT}/ | wc -l`)
     makeinfo admin "$2/info" "$PKGID" "$VERSION" $ADMINSIZE $NFILES norestart
+
+    sudo chown root:admin "${PKG_ROOT}"
+    sudo chown -hR root:wheel "${PKG_ROOT}/usr"
+    sudo chown -hR root:wheel "${PKG_ROOT}/private"
 }
 
 
-###################
-## /Applications ##
-###################
+## Create a template package root for the "apps" package.
+#
+# Arguments:
+#   $1 - Root path to the checked-out munki git repository
+#   $2 - Path to the temporary package root, used to build each component package.
+#
+create_pkgroot_apps() {
+    echo "Creating applications package template..."
+    PKG_ROOT="$2/munki_app"
+    MUNKI_ROOT="$1"
 
-echo "Creating applications package template..."
+    # Create directory structure.
+    mkdir -m 1775 "${PKG_ROOT}"
+    mkdir -m 775 "${PKG_ROOT}/Applications"
 
-# Create directory structure.
-APPROOT="$PKGTMP/munki_app"
-mkdir -m 1775 "$APPROOT"
-mkdir -m 775 "$APPROOT/Applications"
-# Copy Managed Software Center application.
-cp -R "$MSCAPP" "$APPROOT/Applications/"
-# Copy MunkiStatus helper app
-cp -R "$MSAPP" "$APPROOT/Applications/Managed Software Center.app/Contents/Resources/"
-# Copy notifier helper app
-cp -R "$NOTIFIERAPP" "$APPROOT/Applications/Managed Software Center.app/Contents/Resources/"
-# make sure not writeable by group or other
-chmod -R go-w "$APPROOT/Applications/Managed Software Center.app"
-# Create package info file.
-APPSIZE=`du -sk $APPROOT | cut -f1`
-NFILES=$(echo `find $APPROOT/ | wc -l`)
-makeinfo app "$PKGTMP/info" "$PKGID" "$APPSVERSION" $APPSIZE $NFILES norestart
+    # Copy Managed Software Center application.
+    cp -R "$MSCAPP" "${PKG_ROOT}/Applications/"
 
+    # Copy MunkiStatus helper app
+    cp -R "$MSAPP" "${PKG_ROOT}/Applications/Managed Software Center.app/Contents/Resources/"
 
-##############
-## launchd ##
-##############
+    # Copy notifier helper app
+    cp -R "$NOTIFIERAPP" "${PKG_ROOT}/Applications/Managed Software Center.app/Contents/Resources/"
 
-echo "Creating launchd package template..."
+    # make sure not writeable by group or other
+    chmod -R go-w "${PKG_ROOT}/Applications/Managed Software Center.app"
 
-# Create directory structure.
-LAUNCHDROOT="$PKGTMP/munki_launchd"
-mkdir -m 1775 "$LAUNCHDROOT"
-mkdir -m 1775 "$LAUNCHDROOT/Library"
-mkdir -m 755 "$LAUNCHDROOT/Library/LaunchAgents"
-mkdir -m 755 "$LAUNCHDROOT/Library/LaunchDaemons"
-# Copy launch daemons and launch agents.
-cp -X "$MUNKIROOT/launchd/LaunchAgents/"*.plist "$LAUNCHDROOT/Library/LaunchAgents/"
-chmod 644 "$LAUNCHDROOT/Library/LaunchAgents/"*
-cp -X "$MUNKIROOT/launchd/LaunchDaemons/"*.plist "$LAUNCHDROOT/Library/LaunchDaemons/"
-chmod 644 "$LAUNCHDROOT/Library/LaunchDaemons/"*
-# Create package info file.
-LAUNCHDSIZE=`du -sk $LAUNCHDROOT | cut -f1`
-NFILES=$(echo `find $LAUNCHDROOT/ | wc -l`)
-makeinfo launchd "$PKGTMP/info" "$PKGID" "$LAUNCHDVERSION" $LAUNCHDSIZE $NFILES restart
+    # Create package info file.
+    APPSIZE=$(du -sk ${PKG_ROOT} | cut -f1)
+    NFILES=$(echo `find ${PKG_ROOT}/ | wc -l`)
+    makeinfo app "$2/info" "$PKGID" "$APPSVERSION" $APPSIZE $NFILES norestart
+
+    sudo chown root:admin "${PKG_ROOT}"
+    sudo chown -hR root:admin "${PKG_ROOT}/Applications"
+}
 
 
-#######################
-## app_usage_monitor ##
-#######################
+## Create a template package root for the "launchd" package.
+#
+# Arguments:
+#   $1 - Root path to the checked-out munki git repository
+#   $2 - Path to the temporary package root, used to build each component package.
+#
+create_pkgroot_launchd() {
+    echo "Creating launchd package template..."
+    PKG_ROOT="$2/munki_launchd"
+    MUNKI_ROOT="$1"
 
-echo "Creating app_usage package template..."
+    # Create directory structure.
+    mkdir -m 1775 "${PKG_ROOT}"
+    mkdir -m 1775 "${PKG_ROOT}/Library"
+    mkdir -m 755 "${PKG_ROOT}/Library/LaunchAgents"
+    mkdir -m 755 "${PKG_ROOT}/Library/LaunchDaemons"
 
-# Create directory structure.
-APPUSAGEROOT="$PKGTMP/munki_app_usage"
-mkdir -m 1775 "$APPUSAGEROOT"
-mkdir -m 1775 "$APPUSAGEROOT/Library"
-mkdir -m 755 "$APPUSAGEROOT/Library/LaunchAgents"
-mkdir -m 755 "$APPUSAGEROOT/Library/LaunchDaemons"
-mkdir -p "$APPUSAGEROOT/usr/local/munki"
-chmod -R 755 "$APPUSAGEROOT/usr"
-# Copy launch agent, launch daemon, daemon, and agent
-# LaunchAgent
-cp -X "$MUNKIROOT/launchd/app_usage_LaunchAgent/"*.plist "$APPUSAGEROOT/Library/LaunchAgents/"
-chmod 644 "$APPUSAGEROOT/Library/LaunchAgents/"*
-# LaunchDaemon
-cp -X "$MUNKIROOT/launchd/app_usage_LaunchDaemon/"*.plist "$APPUSAGEROOT/Library/LaunchDaemons/"
-chmod 644 "$APPUSAGEROOT/Library/LaunchDaemons/"*
-# Copy tools.
-# edit this if list of tools changes!
-for TOOL in appusaged app_usage_monitor
-do
-	cp -X "$MUNKIROOT/code/client/$TOOL" "$APPUSAGEROOT/usr/local/munki/" 2>&1
-done
-# Set permissions.
-chmod -R go-w "$APPUSAGEROOT/usr/local/munki"
-chmod +x "$APPUSAGEROOT/usr/local/munki"
-# Create package info file.
-APPUSAGESIZE=`du -sk $APPUSAGEROOT | cut -f1`
-NFILES=$(echo `find $APPUSAGEROOT/ | wc -l`)
-makeinfo app_usage "$PKGTMP/info" "$PKGID" "$VERSION" $APPUSAGEROOT $NFILES norestart
+    # Copy launch daemons and launch agents.
+    cp -X "${MUNKI_ROOT}/launchd/LaunchAgents/"*.plist "${PKG_ROOT}/Library/LaunchAgents/"
+    chmod 644 "${PKG_ROOT}/Library/LaunchAgents/"*
+    cp -X "${MUNKI_ROOT}/launchd/LaunchDaemons/"*.plist "${PKG_ROOT}/Library/LaunchDaemons/"
+    chmod 644 "${PKG_ROOT}/Library/LaunchDaemons/"*
 
+    # Create package info file.
+    LAUNCHDSIZE=$(du -sk ${PKG_ROOT} | cut -f1)
+    NFILES=$(echo `find ${PKG_ROOT}/ | wc -l`)
+    makeinfo launchd "$2/info" "$PKGID" "$LAUNCHDVERSION" $LAUNCHDSIZE $NFILES restart
 
-#############################
-## Create metapackage root ##
-#############################
-
-echo "Creating metapackage template..."
+    # Update ownership
+    sudo chown root:admin "${PKG_ROOT}"
+    sudo chown root:admin "${PKG_ROOT}/Library"
+    sudo chown -hR root:wheel "${PKG_ROOT}/Library/LaunchDaemons"
+    sudo chown -hR root:wheel "${PKG_ROOT}/Library/LaunchAgents"
+}
 
 
-# Create root for productbuild.
-METAROOT="$PKGTMP/munki_mpkg"
-mkdir -p "$METAROOT/Resources"
-# Configure Distribution
-DISTFILE="$METAROOT/Distribution"
-PKGPREFIX="#"
-# Package destination directory.
-PKGDEST="$METAROOT"
+## Create a template package root for the "app_usage_monitor" package.
+#
+# Arguments:
+#   $1 - Root path to the checked-out munki git repository
+#   $2 - Path to the temporary package root, used to build each component package.
+#
+# Globals:
+#   PKGID - Global Package Identifier Prefix
+#
+create_pkgroot_appusage() {
+    echo "Creating app_usage package template..."
+    PKG_ROOT="$2/munki_app_usage"
+    MUNKI_ROOT="$1"
+
+    # Create directory structure.
+    mkdir -m 1775 "${PKG_ROOT}"
+    mkdir -m 1775 "${PKG_ROOT}/Library"
+    mkdir -m 755 "${PKG_ROOT}/Library/LaunchAgents"
+    mkdir -m 755 "${PKG_ROOT}/Library/LaunchDaemons"
+    mkdir -p "${PKG_ROOT}/usr/local/munki"
+    chmod -R 755 "${PKG_ROOT}/usr"
+
+    # Copy launch agent, launch daemon, daemon, and agent
+    # LaunchAgent
+    cp -X "${MUNKI_ROOT}/launchd/app_usage_LaunchAgent/"*.plist "${PKG_ROOT}/Library/LaunchAgents/"
+    chmod 644 "${PKG_ROOT}/Library/LaunchAgents/"*
+
+    # LaunchDaemon
+    cp -X "${MUNKI_ROOT}/launchd/app_usage_LaunchDaemon/"*.plist "${PKG_ROOT}/Library/LaunchDaemons/"
+    chmod 644 "${PKG_ROOT}/Library/LaunchDaemons/"*
+
+    # Copy tools.
+    # edit this if list of tools changes!
+    for TOOL in appusaged app_usage_monitor
+    do
+        cp -X "${MUNKI_ROOT}/code/client/${TOOL}" "${PKG_ROOT}/usr/local/munki/" 2>&1
+    done
+
+    # Set permissions.
+    chmod -R go-w "${PKG_ROOT}/usr/local/munki"
+    chmod +x "${PKG_ROOT}/usr/local/munki"
+
+    # Create package info file.
+    APPUSAGESIZE=$(du -sk ${PKG_ROOT} | cut -f1)
+    NFILES=$(echo `find ${PKG_ROOT}/ | wc -l`)
+    makeinfo app_usage "$2/info" "$PKGID" "$VERSION" ${PKG_ROOT} $NFILES norestart
+
+    # Update ownership
+    sudo chown root:admin "${PKG_ROOT}/Library"
+    sudo chown -hR root:wheel "${PKG_ROOT}/Library/LaunchDaemons"
+    sudo chown -hR root:wheel "${PKG_ROOT}/Library/LaunchAgents"
+    sudo chown -hR root:wheel "${PKG_ROOT}/usr"
+}
+
+
+## Create a template package root for the metapackage.
+#
+# Arguments:
+#   $1 - Root path to the checked-out munki git repository
+#   $2 - Path to the temporary package root, used to build each component package.
+#
+# Globals:
+#   DISTFILE - Path to the Distribution file.
+#   PKGPREFIX
+#   PKGDEST - Destination for the built distribution package.
+#
+create_pkgroot_metapackage() {
+    echo "Creating metapackage template..."
+    PKG_ROOT="$2/munki_mpkg"
+    MUNKI_ROOT="$1"
+
+    # Create root for productbuild.
+    mkdir -p "${PKG_ROOT}/Resources"
+
+    # Configure Distribution
+    DISTFILE="${PKG_ROOT}/Distribution"
+    PKGPREFIX="#"
+
+    # Package destination directory.
+    PKGDEST="${PKG_ROOT}"
+}
 
 
 ## Create the `Distribution` file for the package.
@@ -659,37 +740,122 @@ create_distribution() {
 EOF
 }
 
+## Build a munkitools component package.
+#
+# Arguments:
+#   $1 - Component short name, eg. core, admin, app
+#   $2 - Version
+#   $3 - Scripts location
+#   $4 - Path to package temporary build location
+#   $5 - Package output destination
+#
+# Globals:
+#   $CURRENTUSER - Current console user
+#   $PKGID - The package identifier prefix for all packages
+#
+build_pkg() {
+    echo
+    echo "Packaging munkitools_$1-$2.pkg"
+
+    # Use pkgutil --analyze to build a component property list
+    # then turn off bundle relocation
+    sudo /usr/bin/pkgbuild \
+        --analyze \
+        --root "$4/munki_$1" \
+        "${4}/munki_${1}_component.plist"
+    if [ "$1" == "app" ]; then
+        # change BundleIsRelocatable from true to false
+        sudo /usr/libexec/PlistBuddy \
+            -c 'Set :0:BundleIsRelocatable false' \
+            "${4}/munki_${1}_component.plist"
+    fi
+
+    # use sudo here so pkgutil doesn't complain when it tries to
+    # descend into root/Library/Managed Installs/*
+    if [ "$3" != "" ]; then
+        sudo /usr/bin/pkgbuild \
+            --root "$4/munki_$1" \
+            --identifier "$PKGID.$1" \
+            --version "$2" \
+            --ownership preserve \
+            --info "$4/info_$1" \
+            --component-plist "${4}/munki_${1}_component.plist" \
+            --scripts "$3" \
+            "$5/munkitools_$1-$2.pkg"
+    else
+        sudo /usr/bin/pkgbuild \
+            --root "$4/munki_$1" \
+            --identifier "$PKGID.$1" \
+            --version "$2" \
+            --ownership preserve \
+            --info "$4/info_$1" \
+            --component-plist "${4}/munki_${1}_component.plist" \
+            "$5/munkitools_$1-$2.pkg"
+    fi
+
+    if [ "$?" -ne 0 ]; then
+        echo "Error packaging munkitools_$1-$2.pkg before rebuilding it."
+        echo "Attempting to clean up temporary files..."
+        sudo rm -rf "$4"
+        exit 2
+    else
+        # set ownership of package back to current user
+        sudo chown -R "$CURRENTUSER" "$5/munkitools_$1-$2.pkg"
+    fi
+}
+
+## Build the distribution.
+#
+# Arguments:
+#   $1 - The signing certificate to use, if any.
+#
+build_distribution() {
+    # build distribution pkg from the components
+    # Sign package if specified with options.
+    if [ "$SIGNINGCERT" != "" ]; then
+         /usr/bin/productbuild \
+            --distribution "$DISTFILE" \
+            --package-path "$METAROOT" \
+            --resources "$METAROOT/Resources" \
+            --sign "$SIGNINGCERT" \
+            "$MPKG"
+    else
+        /usr/bin/productbuild \
+            --distribution "$DISTFILE" \
+            --package-path "$METAROOT" \
+            --resources "$METAROOT/Resources" \
+            "$MPKG"
+    fi
+
+    if [ "$?" -ne 0 ]; then
+        echo "Error creating $MPKG."
+        echo "Attempting to clean up temporary files..."
+        sudo rm -rf "$PKGTMP"
+        exit 2
+    fi
+
+    echo "Distribution package created at $MPKG."
+    echo
+}
 
 
-###################
-## Set ownership ##
-###################
+build_msc "${MUNKIROOT}"
+build_munkistatus "${MUNKIROOT}"
+build_munkinotifier "${MUNKIROOT}"
 
-echo "Setting ownership to root..."
+# Create temporary directory
+PKGTMP=$(mktemp -d -t munkipkg)
 
-sudo chown root:admin "$COREROOT" "$ADMINROOT" "$APPROOT" "$LAUNCHDROOT"
-sudo chown -hR root:wheel "$COREROOT/usr"
-sudo chown -hR root:admin "$COREROOT/Library"
-sudo chown -hR root:wheel "$COREROOT/private"
+create_pkgroot_core "${MUNKIROOT}" "${PKGTMP}" 0
+create_pkgroot_admin "${MUNKIROOT}" "${PKGTMP}"
+create_pkgroot_apps "${MUNKIROOT}" "${PKGTMP}"
+create_pkgroot_launchd "${MUNKIROOT}" "${PKGTMP}"
+create_pkgroot_appusage "${MUNKIROOT}" "${PKGTMP}"
+create_pkgroot_metapackage "${MUNKIROOT}" "${PKGTMP}"
 
-sudo chown -hR root:wheel "$ADMINROOT/usr"
-sudo chown -hR root:wheel "$ADMINROOT/private"
+create_distribution "${MUNKIROOT}" "${CONFPKG}"
 
-sudo chown -hR root:admin "$APPROOT/Applications"
-
-sudo chown root:admin "$LAUNCHDROOT/Library"
-sudo chown -hR root:wheel "$LAUNCHDROOT/Library/LaunchDaemons"
-sudo chown -hR root:wheel "$LAUNCHDROOT/Library/LaunchAgents"
-
-sudo chown root:admin "$APPUSAGEROOT/Library"
-sudo chown -hR root:wheel "$APPUSAGEROOT/Library/LaunchDaemons"
-sudo chown -hR root:wheel "$APPUSAGEROOT/Library/LaunchAgents"
-sudo chown -hR root:wheel "$APPUSAGEROOT/usr"
-
-######################
-## Run pkgbuild ##
-######################
-CURRENTUSER=`whoami`
+CURRENTUSER=$(whoami)
 for pkg in core admin app launchd app_usage; do
     case $pkg in
         "app")
@@ -709,82 +875,10 @@ for pkg in core admin app launchd app_usage; do
             SCRIPTS=""
             ;;
     esac
-    echo
-    echo "Packaging munkitools_$pkg-$ver.pkg"
-
-    # Use pkgutil --analyze to build a component property list
-    # then turn off bundle relocation
-    sudo /usr/bin/pkgbuild \
-        --analyze \
-        --root "$PKGTMP/munki_$pkg" \
-        "${PKGTMP}/munki_${pkg}_component.plist"
-    if [ "$pkg" == "app" ]; then
-        # change BundleIsRelocatable from true to false
-        sudo /usr/libexec/PlistBuddy \
-            -c 'Set :0:BundleIsRelocatable false' \
-            "${PKGTMP}/munki_${pkg}_component.plist"
-    fi
-    # use sudo here so pkgutil doesn't complain when it tries to
-    # descend into root/Library/Managed Installs/*
-    if [ "$SCRIPTS" != "" ]; then
-        sudo /usr/bin/pkgbuild \
-            --root "$PKGTMP/munki_$pkg" \
-            --identifier "$PKGID.$pkg" \
-            --version "$ver" \
-            --ownership preserve \
-            --info "$PKGTMP/info_$pkg" \
-            --component-plist "${PKGTMP}/munki_${pkg}_component.plist" \
-            --scripts "$SCRIPTS" \
-            "$PKGDEST/munkitools_$pkg-$ver.pkg"
-    else
-        sudo /usr/bin/pkgbuild \
-            --root "$PKGTMP/munki_$pkg" \
-            --identifier "$PKGID.$pkg" \
-            --version "$ver" \
-            --ownership preserve \
-            --info "$PKGTMP/info_$pkg" \
-            --component-plist "${PKGTMP}/munki_${pkg}_component.plist" \
-            "$PKGDEST/munkitools_$pkg-$ver.pkg"
-    fi
-
-    if [ "$?" -ne 0 ]; then
-        echo "Error packaging munkitools_$pkg-$ver.pkg before rebuilding it."
-        echo "Attempting to clean up temporary files..."
-        sudo rm -rf "$PKGTMP"
-        exit 2
-    else
-        # set ownership of package back to current user
-        sudo chown -R "$CURRENTUSER" "$PKGDEST/munkitools_$pkg-$ver.pkg"
-    fi
+    build_pkg "${pkg}" "${ver}" "${SCRIPTS}" "${PKGTMP}" "${PKGDEST}"
 done
 
-echo
-# build distribution pkg from the components
-# Sign package if specified with options.
-if [ "$SIGNINGCERT" != "" ]; then
-     /usr/bin/productbuild \
-        --distribution "$DISTFILE" \
-        --package-path "$METAROOT" \
-        --resources "$METAROOT/Resources" \
-        --sign "$SIGNINGCERT" \
-        "$MPKG"
-else
-    /usr/bin/productbuild \
-        --distribution "$DISTFILE" \
-        --package-path "$METAROOT" \
-        --resources "$METAROOT/Resources" \
-        "$MPKG"
-fi
 
-if [ "$?" -ne 0 ]; then
-    echo "Error creating $MPKG."
-    echo "Attempting to clean up temporary files..."
-    sudo rm -rf "$PKGTMP"
-    exit 2
-fi
-
-echo "Distribution package created at $MPKG."
-echo
 echo "Removing temporary files..."
 sudo rm -rf "$PKGTMP"
 
